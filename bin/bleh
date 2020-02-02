@@ -1,0 +1,5 @@
+require 'tty-editor'
+
+test = TTY::Editor.open(content: "penis")
+
+puts test[content]

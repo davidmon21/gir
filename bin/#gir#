@@ -1,0 +1,135 @@
+#!/usr/bin/env ruby
+require 'gir'
+require 'optparse'
+
+$home = Dir.home
+
+options = { file: File.join($home,".gir","gir.db"), ui: 'tui', book: "Notebook", encrypt: false, configdir: File.join($home,".gir"), schema: "default" }
+
+opts = OptionParser.new do |opts|
+  opts.banner = "Usage: #{$0} [options]"
+
+  opts.on("-d", "--db FILE",
+          "sqlite3.db") do |f|
+    options[:file] = f
+  end
+
+  opts.on("-b", "--book NAME",
+          "notebook name") do |b|
+    options[:book] = b
+  end
+
+  opts.on("-a", "--add",
+          "add a note") do |a|
+    options[:add] = b
+  end
+
+  opts.on("-g", "--grab NOTE",
+          "note name") do |g|
+    options[:grab] = g
+  end
+
+  opts.on("-n", "--note NAME",
+          "note name") do |n|
+    options[:note] = n
+  end
+
+  opts.on("-i", "--id NOTEID",
+          "that number next to their names") do |i|
+    options[:id] = i
+  end
+
+  opts.on("-e", "--edit",
+          "edit note") do |e|
+    options[:edit] = e
+  end
+
+  opts.on("-t", "--tags [tags]",
+          "tag") do |t|
+    options[:tag] = t
+  end
+
+  opts.on("-c", '--content note "content"',
+          "note contents") do |c|
+    options[:content] = c
+  end
+
+  opts.on("-x", "--encrypt",
+          "encrypted notebook") do |s|
+    options[:encrypted] = true
+  end
+
+  opts.on("-z", "--config-dir directory",
+          "default is .gir") do |z|
+    options[:configdir] = z
+  end
+
+  opts.on("-u", "--ui tui",
+          "user interface option") do |u|
+    options[:ui] = u
+  end
+
+  opts.on("-s", "--schema default",
+          "schema for new notes") do |x|
+    options[:schema] = x
+  end
+
+end.parse!
+util = Utils.new
+case options[:ui]
+when 'tui'
+  ui = GirTui.new
+end
+
+Dir.mkdir options[:configdir] unless File.exists? options[:configdir]
+
+configfile = File.join(options[:configdir],'conf')
+schemafile = File.join(options[:configdir],'schemas')
+
+if File.exists? configfile
+  configs = util.process_configs config 
+else
+  configs = ui.start_config
+end
+
+if File.exists? schemafile
+  schemas = util.process_schemas(schemafile)
+else
+  File.write(schemafile,"default=name,note\npassword=username,password,url\n")
+  schemas = { "default" => ["name","note"], "password" => ["username","password","url"] }
+end
+
+if options[:add]
+end
+
+/*
+schemas = { "default" => ["name", "note"] }
+
+notes = Notebook.new options[:file], options[:book], schemas[options[:schema]], ui, encrypted = options[:encrypted]
+notes.add_note({"name" => "test 1", "tags" => ["fart"],"note" => "helllloooo scummy" })
+notes.add_note({"name" => "test 2", "tags" => ["fart","mouse","dog"],"note" => "helllloooo scummmmmy" })
+notes.add_note({"name" => "test 3", "tags" => ["shart"], "note" => "hooo scummy" })
+notes.add_note({"name" => "test 1", "tags" => ["fart","cat"],"note" => "helllloooo" })
+puts notes.get_all_tags
+notes.update_note({"name" => "zebra"},3)
+#notes.add_enc_tags(["cat"], 2)
+#notes.add_tags(["zombie"], 4)
+#notes.delete_note '4'
+puts 'note 1'
+puts notes.get_tags '1'
+puts notes.query_notes( '1','note_id')
+puts 'not 2'
+puts notes.get_tags '2'
+puts notes.query_notes( '2','note_id')
+puts 'note 3'
+puts notes.get_tags '3'
+puts notes.query_notes( '3','note_id')
+puts 'fart'
+puts notes.get_notes('fart')
+puts 'cat'
+puts notes.get_notes('cat')
+puts 'mouse'
+puts notes.get_notes('mouse')
+puts 'dog'
+puts notes.get_notes('dog')
+*/

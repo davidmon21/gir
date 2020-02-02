@@ -1,0 +1,315 @@
+require 'base64'
+require 'rbnacl'
+require 'io/console'
+
+class RCNotes
+  attr_accessor :notebook, :encrypt, :collection, :tag_table, :schema, :tag_relations, :key, :salt, :box
+  attr_accessor :strings = { :add_tag_to_note => "insert into %s (note_id,tag_id ) VALUES (%s, %s)",
+                             :del_tag_to_note => "delete from %s where ( note_id, tag_id ) = ( %s, %s )",
+                             :salt_table => "create table if not exists salt ( collection TEXT UNIQ, salt TEXT UNIQ )",
+                             :grab_salt => "select salt from salt where collection = '%s'",
+                             :add_salt => "insert into salt ( collection, salt ) VALUES ( '%s' , '%s' )",
+                             :inserter => "insert into %s (%s) VALUES (%s)",
+                             :add_tag => "insert into %s (tag) VALUES ('%s')",
+                             :update_note => "update %s set %s = '%s' where note_id = %s",
+                             :get_tag_id => "SELECT tag_id from %s where tag = '%s'",
+                             :get_note_id => "SELECT tag_id from %s where note_id = %s",
+                             :get_tag => "SELECT tag from %s where tag_id = %s",
+                             :query => "SELECT %s from %s where %s = %s ",
+                             :get_name => "SELECT name from %s where note_id = %s",
+                             :enable_foreign => "PRAGMA foreign_keys=on",
+                             :del_note => "DELETE FROM %s where note_id = %s",
+                             :insert_id => "select last_insert_rowid()",
+                             :get_all => "select * from %s"
+                           }
+  attr_accessor :schema_strings = { :note_table => "create table if not exists %s ( note_id INTEGER PRIMARY KEY, %s date TEXT)",
+                                    :tag_table => "create table if not exists %s ( tag_id INTEGER PRIMARY KEY, tag TEXT )",
+                                    :tag_link_table => "create table if not exists %s ( note_id INTEGER, tag_id INTEGER, PRIMARY KEY ( note_id, tag_id ), FOREIGN KEY ( note_id ) REFERENCES %s (note_id) ON DELETE CASCADE, FOREIGN KEY (tag_id) REFERENCES %s ( tag_id ) ON DELETE CASCADE)"
+                                  }
+
+  def initialize(notebook, collection, schema, tagtable=false, encrypted=false, passwordhandle="text", type = 'sql')
+    self.backend type
+    self.set_collection_name(collection)
+    self.set_tags(tagtable)
+    self.tag_relations="links_"+self.tag_table
+    self.schema=schema
+    self.prepare_schema(schema)
+    self.encrypt = encrypted
+    if encrypted
+      self.preparebox(passwordhandle)
+    end
+  end
+
+  def backend(type)
+    if type == 'sql'
+      require 'sqlite3'
+      self.notebook = SQLite3::Database.new notebook 
+    end
+  end
+  
+  def runner(command)
+    if type == 'sql'
+      return self.notebook.execute command
+    end
+  end
+  
+  def preparebox(passwordhandle)
+    self.notebook.execute(self.strings[:salt_table])
+    possiblesalts = self.runner( self.strings[:grab_salt] % [self.collection]).flatten
+    unless possiblesalts.length == 0
+      self.salt = Base64.decode64 possiblesalts[0]
+      exists = true
+    else
+      self.salt = RbNaCl::Random.random_bytes(RbNaCl::PasswordHash::Argon2::SALTBYTES)
+      self.runner(self.strings[:add_salt % [ self.collection, (Base64.encode64 self.salt) ])
+      exists = false
+    end
+    if passwordhandle == "text"
+      self.tui_pass(exists)
+    end
+  end
+
+  def tui_pass(exists)
+    opslimit = 5
+    memlimit = 7_256_678
+    digest_size = 32
+    tries = 1
+    if exists
+      until tries == 3
+        begin
+          print "Enter Password: "
+          $stdout.flush
+          password = STDIN.noecho(&:gets).chomp
+          puts ""
+          self.box = RbNaCl::SimpleBox.from_secret_key(RbNaCl::PasswordHash.argon2(password,self.salt,opslimit,memlimit,digest_size))
+          tries = 3
+        rescue
+          puts "Invalid Password!"
+          tries+=1
+          if tries == 3
+            exit
+          end
+        end
+      end
+    else
+      done = false
+      until done
+        print "Enter Password: "
+        $stdout.flush
+        password1 = STDIN.noecho(&:gets).chomp
+        puts ""
+        print "Re-Enter Password: "
+        $stdout.flush
+        password2 = STDIN.noecho(&:gets).chomp
+        puts ""
+        if password1 == password2
+          self.box = RbNaCl::SimpleBox.from_secret_key(RbNaCl::PasswordHash.argon2(password1,self.salt,opslimit,memlimit,digest_size))
+          done = true
+        end
+      end
+    end
+  end
+
+  def set_collection_name(collection)
+    self.collection = ((Base64.encode64 collection).strip).chomp("==")
+  end
+
+  def set_tags(tag_name=false)
+    if tag_name == false
+      tag_name = "tags_"+self.collection
+    end
+    self.tag_table = tag_name
+  end
+  
+
+  def prepare_data(content, encrypted=false)
+    keys = content.keys
+    tags = []
+    if keys.include? "tags"
+      tags = content["tags"]
+      content.delete "tags"
+    end
+    for key,value in content
+      if self.encrypt
+        content[key] = (Base64.encode64 self.box.encrypt(value))
+      else
+        content[key] = (Base64.encode64 value).strip
+      end
+    end
+    return content, tags
+  end
+
+  def prepare_tags(tags)
+    for tag in tags
+        tag.strip!
+        tag.downcase!
+    end
+    tags = tags.map{|tag| (Base64.encode64 tag).strip}
+    return tags
+  end
+  
+  def add_note(content,encrypted=false)
+    #self.prepare_schema(schema)
+    content,tags = self.prepare_data(content,encrypted)
+    insertstring = self.strings[:inserter] % [self.collection,(content.keys).join(','),('?,'*((content.keys).length)).chomp(',')]
+    self.runner(insertstring,content.values)
+    unless tags.length == 0
+      id = self.insert_id
+      if self.encrypt
+        self.add_enc_tags(tags,id)
+      else
+        self.add_tags(tags,id)
+      end
+    end
+  end
+
+  def insert_id
+    return self.runner(self.strings[:insert_id])[0][0]
+  end
+
+  def delete_note(id)
+    self.runner(self.strings[:del_note] % [self.collection,id])
+  end
+
+  def prepare_schema(schema)
+    self.runner(self.schema_strings[:note_table] % [ self.collection, schema.join(" TEXT,")] )
+    self.runner(self.schema_strings[:tag_table] % [self.tag_table] )
+    self.runner(self.schema_strings[:tag_link_table] % [ self.tag_relations,self.collection,self.tag_table ] )
+    self.runner(self.strings[:enable_foreign])
+  end
+
+  def update_note(content, id)
+    content, tags = self.prepare_data(content)
+    for key,value in content
+      self.runner(self.strings[:update_note] % [ self.collection, key ,value,id])
+    end
+  end
+
+  def remove_tags(tags, id)
+    tags = self.prepare_tags(tags)
+    for tag in tags
+      exists = self.runner(self.strings[:get_tag_id] % [self.tag_table,tag])
+      unless exists.length == 0
+        self.runner(self.strings[:del_tag_to_note] % [self.tag_relations,id,exists[0][0]]);
+      end
+    end
+  end
+  
+  def remove_enc_tags(tags, id)
+    tags = tags.map{ |tag| tag.downcase.strip }
+    existing_tags = self.get_tags(id)
+    for tag_id,tag in existing_tags
+      if tags.include? tag
+        self.runner(self.strings[:del_tag_to_note] % [self.tag_relations,id,tag_id])
+      end
+    end
+  end
+
+  def get_all_tags
+    existing_tags = Hash[self.runner(self.strings[:get_all] % [ self.tag_table ])]
+    tags = tags.map{ |tag| (tag.downcase).strip }
+    for key,value in existing_tags
+      if self.encrypt
+        existing_tags[key] = self.box.decrypt((Base64.decode64(value))).strip
+      else
+        existing_tags[key] = (Base64.decode64 value).downcase.strip
+      end
+    end
+    return existing tags
+  end
+  
+  def add_enc_tags(tags,id)
+    tags = tags.map{ |tag| (tag.downcase).strip }
+    existing_tags = self.get_all_tags
+    for key,value in existing_tags
+      if tags.include? value
+        tags.delete value
+        self.runner(self.strings[:add_tag_to_note] % [self.tag_relations,id, (existing_tags.key(value))])
+      end
+    end
+    for tag in tags
+      self.runner(self.strings[:add_tag] % [self.tag_table,(Base64.encode64 (self.box.encrypt(tag)))])
+      tag_id = self.insert_id
+      self.runner(self.strings[:add_tag_to_note] % [self.tag_relations,id,tag_id])
+    end
+  end
+  
+  def add_tags(tags, id)
+    tags = self.prepare_tags(tags)
+    for tag in tags
+      exists = self.runner(self.strings[:get_tag_id] % [self.tag_table,tag])
+      if exists.length == 0
+        self.runner(self.strings[:add_tag] % [self.tag_table,tag])
+        tag_id = self.insert_id
+      else
+        tag_id = exists[0][0]
+      end
+      self.runner(self.strings[:add_tag_to_note] % [ self.tag_relations, id, tag_id])
+    end
+  end
+
+  def query_notes(value,query)
+    unless query == 'note_id'
+      query = "'%s'" % [(Base64.encode64 query).strip]
+    end
+    results = {}
+    for item in self.schema
+    results[item] = Base64.decode64 self.runner(self.strings[:query] % [item,self.collection,query,value])[0][0]
+    end
+    return results
+  end
+
+  def get_tags(id)
+    tags = []
+    items = (self.runner(self.strings[:get_note_id] % [self.tag_relations,id])).flatten
+    for tag in items
+      taget = Base64.decode64(self.runner(self.strings[:get_tag] % [self.tag_table, tag_id])[0][0])
+      if self.encrypt
+        decrypted = self.box.decrypt(taget).downcase.strip
+        tags.append(decrypted)
+      else
+        tags.append(taget.downcase.strip)
+      end
+    end
+    return Hash[items.zip(tags)]
+  end
+
+  def get_notes(tag)
+    notes = []
+    id = self.runner(self.strings[:get_tag_id] % [self.tag_table,(Base64.encode64 (tag.downcase).strip).strip])[0][0]
+    items = (self.runner(self.strings[:get_note_id] % [self.tag_relations,id])).flatten
+    for note in items
+      notes.append(Base64.decode64 self.runner(self.strings[:get_name] % [self.collection,note])[0][0])
+    end
+    return Hash[items.zip(notes)]
+  end
+  
+end
+
+schema = ["name","note"]
+notes = RCNotes.new "/usr/home/mouse/.rcnotes.db", "encrypteeddd", schema, tagtable=false, encrypted=true
+notes.add_note({"name" => "test 1", "tags" => ["fart","cat","mouse", "new"],"note" => "helllloooo scummy" })
+#notes.add_note({"name" => "test 2", "tags" => ["fart","mouse","dog"],"note" => "helllloooo scummmmmy" })
+#notes.add_note({"name" => "test 3", "tags" => ["shart"], "note" => "hooo scummy" })
+#notes.add_note({"name" => "test 1", "tags" => ["fart","cat"],"note" => "helllloooo" })
+#notes.update_note({"name" => "zebra"},4)
+#notes.remove_tags(["cat"], 4)
+#notes.add_tags(["zombie"], 4)
+#notes.delete_note '4'
+#puts 'note 1'
+#puts notes.get_tags '1'
+#puts notes.query_notes( '1','note_id')
+#puts 'not 2'
+#puts notes.get_tags '2'
+#puts notes.query_notes( '2','note_id')
+#puts 'note 3'
+#puts notes.get_tags '3'
+#puts notes.query_notes( '3','note_id')
+#puts 'fart'
+#puts notes.get_notes('fart')
+#puts 'cat'
+#puts notes.get_notes('cat')
+#puts 'mouse'
+#puts notes.get_notes('mouse')
+#puts 'dog'
+#puts notes.get_notes('dog')
