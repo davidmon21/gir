@@ -1,8 +1,0 @@
-require 'base64'
-require 'rbnacl'
-require 'io/console'
-require 'rubygems'
-
-%w[ fcp_client communicator utils ].each do |file|
- require "gir/#{file}"
-end
