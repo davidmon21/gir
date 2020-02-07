@@ -1,13 +1,12 @@
 #!/usr/bin/env ruby
 require 'gir'
-require 'girtui'
 require 'optparse'
 
 $home = Dir.home
 
 options = { file: File.join($home,".gir","gir.db"), ui: 'tui', book: "Notebook", encrypt: false, configdir: File.join($home,".gir"), schema: "default" }
 
-opts = OptionsParser.new do |opts|
+opts = OptionParser.new do |opts|
   opts.banner = "Usage: #{$0} [options]"
 
   opts.on("-d", "--db FILE",
@@ -57,7 +56,7 @@ opts = OptionsParser.new do |opts|
 
   opts.on("-x", "--encrypt",
           "encrypted notebook") do |s|
-    options[:encrypted] = s
+    options[:encrypted] = true
   end
 
   opts.on("-z", "--config-dir directory",
@@ -75,7 +74,7 @@ opts = OptionsParser.new do |opts|
     options[:schema] = x
   end
 
-end
+end.parse!
 
 case options[:ui]
 when 'tui'
@@ -84,19 +83,29 @@ end
 
 Dir.mkdir options[:configdir] unless File.exists? options[:configdir]
 
-config = File.join(options[:configdir],'conf')
+configfile = File.join(options[:configdir],'conf')
+schemafile = File.join(options[:configdir],'schemas')
 
-if File.exists? config
-  configs = processconfigs config 
+if File.exists? configfile
+  configs = Utils.processconfigs config 
 else
   configs = ui.startconfig
 end
 
+if File.exists? schemafile
+  schemas = Utils.process_schemas(schemafile)
+else
+  File.write(schemafile,"default=name,note\npassword=username,password,url\n")
+  schemas = { "default" => ["name","note"], "password" => ["username","password","url"] }
+end
+
 if options[:add]
 end
+
+/*
 schemas = { "default" => ["name", "note"] }
 
-notes = Gir.new options[:file], "encrypted", schemas[options[:schema]], ui, encrypted: options[:encrypt]
+notes = Notebook.new options[:file], options[:book], schemas[options[:schema]], ui, encrypted = options[:encrypted]
 notes.add_note({"name" => "test 1", "tags" => ["fart"],"note" => "helllloooo scummy" })
 notes.add_note({"name" => "test 2", "tags" => ["fart","mouse","dog"],"note" => "helllloooo scummmmmy" })
 notes.add_note({"name" => "test 3", "tags" => ["shart"], "note" => "hooo scummy" })
@@ -123,3 +132,4 @@ puts 'mouse'
 puts notes.get_notes('mouse')
 puts 'dog'
 puts notes.get_notes('dog')
+*/

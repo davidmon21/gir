@@ -6,7 +6,7 @@ Gem::Specification.new do |s|
   s.description = "Zim but ruby"
   s.authors     = ["mouse"]
   s.email       = 'iamacat@rape.lol'
-  s.files       = ["lib/gir.rb", "lib/gir/girtui.rb", "lib/gir/notebook.rb"]
+  s.files       = ["lib/gir.rb", "lib/gir/girtui.rb", "lib/gir/notebook.rb", "lib/gir/utils.rb"]
   s.homepage    =
     'https://mouse.services'
   s.license       = 'Unlicense'

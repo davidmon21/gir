@@ -3,6 +3,6 @@ require 'rbnacl'
 require 'io/console'
 require 'rubygems'
 
-%w[ girtui notebook ].each do |file|
+%w[ utils girtui notebook ].each do |file|
  require "gir/#{file}"
 end

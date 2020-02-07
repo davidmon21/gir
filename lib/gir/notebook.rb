@@ -41,7 +41,8 @@ class Notebook
                      :enable_foreign => "PRAGMA foreign_keys=on",
                      :del_note => "DELETE FROM %s where note_id = %s",
                      :insert_id => "select last_insert_rowid()",
-                     :get_all => "select * from %s"
+                     :get_all => "select * from %s",
+                     :get => "select %s from %s"
                    }
     self.schema_strings = { :note_table => "create table if not exists %s ( note_id INTEGER PRIMARY KEY, %s )",
                             :tag_table => "create table if not exists %s ( tag_id INTEGER PRIMARY KEY, tag TEXT )",
@@ -137,7 +138,7 @@ class Notebook
     end
     return content, tags
   end
-
+  
   def prepare_tags(tags)
     for tag in tags
         tag.strip!
@@ -265,24 +266,23 @@ class Notebook
     end
   end
 
-  def query_notes(value,query)
-    unless query == 'note_id'
-      query = "'%s'" % [(Base64.encode64 query).strip]
-    end
-    results = {}
-    for item in self.schema
+  def get_name_id
+    dahash = Hash[self.runner(self.strings[:get] % ['note_id, name', self.collection])]
+    for key,value in dahash
       if self.encrypt
-        v = self.runner(self.strings[:query] % [item,self.collection,query,value])
-        returnv = self.box.decrypt(Base64.decode64 v)
+        dahash[key] = self.box.decrypt(Base64.decode64 value)
       else
-        v = self.runner(self.strings[:query] % [item,self.collection,query,value])
-        returnv = Base64.decode64 v
+        dahash[key] = Base64.decode64 value
       end
-      results[item] = returnv
     end
-    return results
+    return dahash
   end
-
+  def get_id(name)
+    name = (Base64.encode64 name).strip
+    #puts self.strings[:query] % ['note_id',self.collection,'name',"'#{name}'"]
+    return self.runner(self.strings[:query] % ['note_id',self.collection,'name',"'#{name}'"])
+  end
+  
   def get_tags(id)
     tags = []
     items = [(self.runner(self.strings[:get_tags_id] % [self.tag_relations,id]))].flatten
@@ -332,6 +332,40 @@ class Notebook
     else
       self._get_notes(tag)
     end
+  end
+
+  def get_all_notes
+    returned_notes = []
+    notes = self.runner(self.strings[:get_all] % [self.collection])
+    for x in notes
+      note_hash = { "note_id" => x[0] }
+      position = 1
+      for z in self.schema
+        if self.encrypt
+          note_hash[z] = self.box.decrypt(Base64.decode64 x[position])
+        else
+          note_hash[z] = Base64.decode64 x[position]
+        end
+        position+=1
+      end
+      returned_notes.append note_hash
+    end
+    return returned_notes
+  end
+
+  def get_a_note(id)
+    results = {}
+    for item in self.schema
+      if self.encrypt
+        v = self.runner(self.strings[:query] % [item,self.collection,'note_id',id])
+        returnv = self.box.decrypt(Base64.decode64 v)
+      else
+        v = self.runner(self.strings[:query] % [item,self.collection,'note_id',id])
+        returnv = Base64.decode64 v
+      end
+      results[item] = returnv
+    end
+    return results
   end
   
 end

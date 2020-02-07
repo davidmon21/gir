@@ -4,132 +4,224 @@ require 'optparse'
 
 $home = Dir.home
 
-options = { file: File.join($home,".gir","gir.db"), ui: 'tui', book: "Notebook", encrypt: false, configdir: File.join($home,".gir"), schema: "default" }
+if ENV.has_key? "GIRDIR"
+  $configdir = ENV["GIRDIR"]
+else
+  $configdir = File.join($home,".gir")
+end
+
+if ENV.has_key? "GIRDB"
+  $dbfile = ENV["dbfile"]
+else
+  $dbfile = File.join($configdir,"gir.db")
+end
+
+options = { book: "notebook", encrypt: false, schema: "default", mode: "notes", ui: "tui"}
 
 opts = OptionParser.new do |opts|
   opts.banner = "Usage: #{$0} [options]"
 
-  opts.on("-d", "--db FILE",
-          "sqlite3.db") do |f|
-    options[:file] = f
-  end
-
-  opts.on("-b", "--book NAME",
-          "notebook name") do |b|
-    options[:book] = b
-  end
-
-  opts.on("-a", "--add",
-          "add a note") do |a|
-    options[:add] = b
-  end
-
-  opts.on("-g", "--grab NOTE",
-          "note name") do |g|
-    options[:grab] = g
-  end
-
-  opts.on("-n", "--note NAME",
-          "note name") do |n|
-    options[:note] = n
-  end
-
-  opts.on("-i", "--id NOTEID",
-          "that number next to their names") do |i|
-    options[:id] = i
-  end
-
-  opts.on("-e", "--edit",
-          "edit note") do |e|
-    options[:edit] = e
-  end
-
-  opts.on("-t", "--tags [tags]",
-          "tag") do |t|
-    options[:tag] = t
-  end
-
-  opts.on("-c", '--content note "content"',
-          "note contents") do |c|
-    options[:content] = c
-  end
-
-  opts.on("-x", "--encrypt",
-          "encrypted notebook") do |s|
-    options[:encrypted] = true
-  end
-
-  opts.on("-z", "--config-dir directory",
-          "default is .gir") do |z|
-    options[:configdir] = z
+  opts.on("-m", "--mode notebook",
+          "program mode") do |mode|
+    options[:mode] = mode
   end
 
   opts.on("-u", "--ui tui",
-          "user interface option") do |u|
-    options[:ui] = u
+          "user interface option") do |ui|
+    options[:ui] = ui
   end
 
-  opts.on("-s", "--schema default",
-          "schema for new notes") do |x|
-    options[:schema] = x
+
+  opts.on("-a", "--add",
+          "add a note") do |add|
+    options[:add] = add
+  end
+
+  opts.on("-r","--remove",
+          "remove note") do |remove|
+    options[:remove] = remove
+  end
+
+  opts.on("-e", "--edit",
+          "edit note") do |edit|
+    options[:edit] = edit
+  end
+
+  opts.on("-n", "--name NAME",
+          "note name") do |name|
+    options[:name] = name
+  end
+
+  opts.on("-i", "--id NOTEID",
+          "that number next to their names") do |id|
+    options[:id] = id
+  end
+
+  opts.on("-b", "--book NAME",
+          "notebook name") do |book|
+    options[:book] = book
+  end
+
+  opts.on("-t", "--tags [tags]",
+          "tag") do |tags|
+    options[:tags] = tags
+  end
+
+  opts.on("-c", '--content note "content"',
+          "note contents") do |contents|
+    options[:content] = contents
+  end
+
+  ##option to encrypt unencrypted notebook needs to exist
+  opts.on("-x", "--encrypt",
+          "encrypted notebook") do |encrypted|
+    options[:encrypted] = true
+  end
+
+  opts.on("-u", "--ui tui",
+          "user interface option") do |ui|
+    options[:ui] = ui
+  end
+
+  opts.on("-s", "--schema notebook",
+          "schema for new notes") do |schema|
+    options[:schema] = schema
   end
 
 end.parse!
 
-case options[:ui]
-when 'tui'
-  ui = GirTui.new
+
+util =  GirUtils.new
+    
+if options[:ui] == "tui"
+    case options[:ui]
+    when 'tui'
+      ui = GirTui.new 'en', util
+    end
+
+    Dir.mkdir $configdir unless File.exists? $configdir
+
+    configfile = File.join($configdir,'conf')
+    schemafile = File.join($configdir,'schemas')
+
+    if File.exists? configfile
+      configs = util.process_configs configfile 
+    else
+      configs = ui.start_config configfile
+    end
+
+    if File.exists? schemafile
+      schemas = util.process_schemas(schemafile)
+    else
+      File.write(schemafile,"default=name,note\npassword=username,password,url\n")
+      schemas = { "default" => ["name","note"], "password" => ["username","password","url"] }
+    end
+
+    if configs["encrypted"] == "true"
+      options[:encrypted] = true
+    end
+
+    notes = Notebook.new $dbfile, options[:book], schemas[options[:schema]], ui, encrypted = options[:encrypted]
 end
 
-Dir.mkdir options[:configdir] unless File.exists? options[:configdir]
+if options[:ui] == "tui" and options[:mode] == "notes"
+    insert_hash = {}
 
-configfile = File.join(options[:configdir],'conf')
-schemafile = File.join(options[:configdir],'schemas')
+    if options[:add]
+      unless options.has_key? :name
+        options[:name] = ui.ainput "Enter a name for your note: ", "blank"
+      end
+      unless options.has_key? :content
+        options[:content] = ui.write_note
+      else
+        options[:content] = util.process_content(options[:content])
+      end
+      unless options.has_key? :tag
+        options[:tag] = ui.ainput "Enter comma seperated list of tags: ", ""
+      end
+      insert_hash = { "name" => options[:name], "note" => options[:content], "tags" => util.tag_to_list(options[:tag]) }
+      notes.add_note(insert_hash)
 
-if File.exists? configfile
-  configs = Utils.processconfigs config 
-else
-  configs = ui.startconfig
+    elsif options[:edit]
+      unless options.has_key? :id
+        unless options.has_key? :name
+          options[:id] = ui.list_select notes.get_name_id, "Select a note by id"
+        else
+          possible = notes.get_id(options[:name])
+          if possible.is_a? Array
+            possible.flatten!
+            possible_hash = {}
+            for item in possible
+              possible_hash[item] = options[:name]
+            end
+            options[:id] = ui.list_select possible_hash, "Select a note by id"
+          end
+        end
+      else
+        options[:id].to_i!
+      end
+      unless options.has_key? :content
+        insert_hash["note"] = ui.edit_note options[:id], notes
+      else
+        insert_hash["note"] = util.process_content(options[:content])
+      end
+      if options.has_key? :name
+        insert_hash["name"] = options[:name]
+      else
+        if (ui.cinput("Would you like to change the name?(N/y)", 'n', ['y','n'])) == 'y'
+          insert_hash["name"] = ui.ainput("Enter name:", "note_"+options[:id].to_s)
+        end
+      end
+      if options.has_key? :tag
+        insert_hash["tag"] = utils.tags_to_list(options[:tag])
+      else
+        if (ui.cinput("Edit tags?(y/N)", 'n', ['y','n'])) == 'y'
+          #needs to print existing tags and ask if you want to remove
+          insert_hash["tag"] = utils.tag_to_list((ui.ainput "Enter coma seperated list of tags: ", ""))
+        end
+      end
+      notes.update_note(insert_hash, options[:id])
+
+    elsif options[:remove]
+      unless options.has_key? :id
+        unless options.has_key? :note
+          options[:id] = ui.list_select notes.get_name_id, "Select a note by id"
+        else
+          possible = notes.get_id(options[:name])
+          if possible.is_a? Array
+            possible.flatten!
+            possible_hash = {}
+            for item in possible
+              possible_hash[item] = options[:name]
+            end
+            options[:id] = ui.list_select possible_hash, "Select a note by id"
+          end
+        end
+      end
+      notes.delete_note options[:id]
+
+    elsif options[:name]
+    elsif options[:id]
+      #tag or note options
+    elsif options[:tag]
+      #remove, add options
+    end
+
+    if options[:list]
+      if options[:tag]
+      else
+      end
+    end
+elsif options[:ui] == "tui" and options[:mode] == "passwords"
+  
+elsif options[:ui] == "tui" and options[:mode] == "bookmarks"
 end
 
-if File.exists? schemafile
-  schemas = Utils.process_schemas(schemafile)
-else
-  File.write(schemafile,"default=name,note\npassword=username,password,url\n")
-  schemas = { "default" => ["name","note"], "password" => ["username","password","url"] }
-end
-
-if options[:add]
-end
-
-/*
-schemas = { "default" => ["name", "note"] }
-
-notes = Notebook.new options[:file], options[:book], schemas[options[:schema]], ui, encrypted = options[:encrypted]
-notes.add_note({"name" => "test 1", "tags" => ["fart"],"note" => "helllloooo scummy" })
-notes.add_note({"name" => "test 2", "tags" => ["fart","mouse","dog"],"note" => "helllloooo scummmmmy" })
-notes.add_note({"name" => "test 3", "tags" => ["shart"], "note" => "hooo scummy" })
-notes.add_note({"name" => "test 1", "tags" => ["fart","cat"],"note" => "helllloooo" })
-puts notes.get_all_tags
-notes.update_note({"name" => "zebra"},3)
-#notes.add_enc_tags(["cat"], 2)
-#notes.add_tags(["zombie"], 4)
-#notes.delete_note '4'
-puts 'note 1'
-puts notes.get_tags '1'
-puts notes.query_notes( '1','note_id')
-puts 'not 2'
-puts notes.get_tags '2'
-puts notes.query_notes( '2','note_id')
-puts 'note 3'
-puts notes.get_tags '3'
-puts notes.query_notes( '3','note_id')
-puts 'fart'
 puts notes.get_notes('fart')
-puts 'cat'
-puts notes.get_notes('cat')
-puts 'mouse'
-puts notes.get_notes('mouse')
-puts 'dog'
-puts notes.get_notes('dog')
-*/
+puts notes.get_id("zebra").inspect
+puts notes.get_all_notes.inspect
+puts notes.get_name_id.inspect
+puts notes.get_all_tags.inspect
+
+#edit note should return whole hash of note
+

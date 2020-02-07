@@ -1,4 +1,4 @@
-class Utils
+class GirUtils
 
   attr_accessor :ui, :gir
   
@@ -8,7 +8,7 @@ class Utils
   def process_configs(config_file)
     config_hash = {}
     configs = File.readlines(config_file)
-    for conf in config
+    for conf in configs
       conf_pieces = conf.split('=')
       config_hash[conf_pieces[0].strip] = conf_pieces[1].strip
     end
@@ -19,7 +19,7 @@ class Utils
     schemas_hash = {}
     schemas = File.readlines(schema_file)
     for sch in schemas
-      schema_pieces = schema.split('=')
+      schema_pieces = sch.split('=')
       schemas_hash[schema_pieces[0].strip] = schema_pieces[1].split(',').map{ |s| s.strip }
     end
     return schemas_hash
@@ -32,4 +32,17 @@ class Utils
     end
     file.close
   end
+
+  def process_content(content)
+    if File.exists? content
+      return File.read content
+    else
+      return content
+    end
+  end
+
+  def tag_to_list(tags)
+    return tags.split(',').map {|tag| tag.downcase.strip}
+  end
+  
 end
